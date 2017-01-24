@@ -4,7 +4,6 @@ from oauth2client import client
 from oauth2client import file
 from oauth2client import tools
 from datetime import datetime, timedelta
-from multiprocessing.dummy import Pool as ThreadPool
 import sys
 import re
 import json
@@ -55,6 +54,8 @@ class CommentBot:
     removedComments = 0
     useThreading = True
 
+    _maxResults = 200
+
     def __init__(self, log, config, directory):
         self._log = log
         self._config = config
@@ -65,47 +66,99 @@ class CommentBot:
         self._comments = service.comments()
         self._removalMethod = self.getRemovalMethod(self._comments)
 
-    def scanBlog(self, blogId):
-        if not re.match('^[0-9]+$', blogId):
-            blogId = self._service.blogs().getByUrl(url=blogId).execute()['id']
-            self._log.warn('Increase performance by replacing url `blogId` configuration with id %s'%blogId)
+    def scanBlog(self, blogUrl):
+        blogId = self.getBlogId(blogUrl)
+        posts = self.getPosts(blogId)
+        comments = self.getComments(posts)
+        pendingRemoval = self.getCommentsToRemove(comments)
+        self.removeComments(pendingRemoval)
 
+        self.scannedPosts = len(posts)
+        self.scannedComments = len(comments)
+
+    def getBlogId(self, blogUrl):
+        if re.match('^[0-9]+$', blogUrl):
+            return blogUrl
+
+        blogId = self._service.blogs().getByUrl(url=blogUrl).execute()['id']
+        self._log.warn('Increase performance by replacing url `blogId` configuration with id %s'%blogId)
+        return blogId
+
+    def getPosts(self, blogId):
         startDate = '%sZ'%(datetime.utcnow()-timedelta(hours=self._config.hours)).isoformat('T')
-        request = self._posts.list(blogId=blogId,startDate=startDate,maxResults=20)
+        request = self._posts.list(blogId=blogId,startDate=startDate,maxResults=self._maxResults,fields='items(id,blog),nextPageToken')
+        posts = []
         while request != None:
             resp = request.execute()
             if 'items' in resp and not (resp['items'] is None):
-                if self.useThreading:
-                    pool = ThreadPool(8)
-                    pool.map(lambda post: self.scanPost(post), resp['items'])
-                    pool.close()
-                    pool.join()
-                else:
-                    for post in resp['items']:
-                        self.scanPost(post, http = self.buildHttp())
+                posts.extend(resp['items'])
             request = self._posts.list_next(request, resp)
+        return posts
 
-    def scanPost(self, post, http = None):
-        if http is None:
-            http = self.buildHttp()
-        request = self._comments.list(blogId=post['blog']['id'], postId=post['id'],status='live',maxResults=100)
-        while request != None:
-            resp = request.execute(http = http)
-            if 'items' in resp and not (resp['items'] is None):
-                for comment in resp['items']:
-                    self.scanComment(comment, http = http)
-            request = self._comments.list_next(request, resp)
-        self.scannedPosts += 1
+    def getComments(self, posts):
+        fields = 'items(author/id,blog,content,id,post),nextPageToken'
+        comments = []
+        current_requests = []
+        next_requests = []
 
-    def scanComment(self, comment, http = None):
-        reason = self.hasReasonToRemove(comment)
-        if http is None:
-            http = self.buildHttp()
-        if reason:
-            self._log.info('Removing (%s) comment %s in post %s by author %s: %s' % (self._config.removalMethod,comment['id'],comment['post']['id'],comment['author']['id'],reason))
-            self._removalMethod(blogId=comment['blog']['id'],postId=comment['post']['id'],commentId=comment['id']).execute(http=http)
+        for post in posts:
+            next_requests.append(self._comments.list(blogId=post['blog']['id'],postId=post['id'],status='live',maxResults=self._maxResults))
+
+        def on_comments(request_id, response, exception):
+            if exception is not None:
+                self._log.error(exception)
+                return
+
+            request = current_requests[int(request_id)]
+            next_request = self._posts.list_next(request, response)
+            if next_request != None:
+                next_requests.append(next_request)
+
+            if 'items' in response and not (response['items'] is None):
+                comments.extend(response['items'])
+
+        batch = self._service.new_batch_http_request(callback=on_comments)
+        while batch != None:
+            for i,request in enumerate(next_requests):
+                batch.add(request, request_id=str(i))
+            current_requests = next_requests
+            next_requests = []
+            batch.execute()
+            if len(next_requests) > 0:
+                batch = self._service.new_batch_http_request(callback=on_comments)
+            else:
+                batch = None
+
+        return comments
+
+    def getCommentsToRemove(self, comments):
+        toRemove = []
+        for comment in comments:
+            reason = self.hasReasonToRemove(comment)
+            if reason:
+                toRemove.append((comment,reason))
+        return toRemove
+
+    def removeComments(self, removals):
+        def on_removed(request_id, response, exception):
+            if exception is not None:
+                self._log.error(exception)
+                return
+
+            comment,reason = removals[int(request_id)]
+            self._log.info('Removed (%s) comment %s in post %s by author %s: %s' % (self._config.removalMethod,comment['id'],comment['post']['id'],comment['author']['id'],reason))
             self.removedComments += 1
-        self.scannedComments += 1
+
+        batch = self._service.new_batch_http_request(callback=on_removed)
+        for i,removal in enumerate(removals):
+            comment,reason=removal
+            batch.add(self._removalMethod(
+                blogId=comment['blog']['id'],
+                postId=comment['post']['id'],
+                commentId=comment['id']
+            ), request_id=str(i))
+
+        batch.execute()
 
     def getRemovalMethod(self,comments):
         try:
@@ -125,11 +178,6 @@ class CommentBot:
 
         return None
 
-    def buildHttp(self, credentials = None):
-        if credentials is None:
-            credentials = self._credentials
-        return credentials.authorize(http=httplib2.Http())
-
     def initCredentialsAndService(self, name, version, directory, scope = None, discovery_filename = None):
         if scope is None:
             scope = 'https://www.googleapis.com/auth/' + name
@@ -147,7 +195,7 @@ class CommentBot:
             flags.nonoauth_local_webserver = True
             credentials = tools.run_flow(flow, storage, flags)
 
-        http = self.buildHttp(credentials)
+        http = credentials.authorize(http=httplib2.Http())
 
         if discovery_filename is None:
             service = discovery.build(name, version, http=http)
