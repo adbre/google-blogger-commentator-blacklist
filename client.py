@@ -59,12 +59,14 @@ class CommentBot:
     def __init__(self, log, config, directory):
         self._log = log
         self._config = config
-        credentials, service = self.initCredentialsAndService('blogger','v3',directory)
+        self._directory = directory
+        credentials, service = self.initCredentialsAndService('blogger','v3')
         self._credentials = credentials
         self._service = service
         self._posts = service.posts()
         self._comments = service.comments()
         self._removalMethod = self.getRemovalMethod(self._comments)
+        self.loadState()
 
     def scanBlog(self, blogUrl):
         blogId = self.getBlogId(blogUrl)
@@ -75,6 +77,8 @@ class CommentBot:
 
         self.scannedPosts = len(posts)
         self.scannedComments = len(comments)
+
+        self.saveState()
 
     def getBlogId(self, blogUrl):
         if re.match('^[0-9]+$', blogUrl):
@@ -101,8 +105,13 @@ class CommentBot:
         current_requests = []
         next_requests = []
 
+        if self._utcLastRun is not None:
+            startDate = '%sZ' % self._utcLastRun.isoformat()
+        else:
+            startDate = None
+
         for post in posts:
-            next_requests.append(self._comments.list(blogId=post['blog']['id'],postId=post['id'],status='live',maxResults=self._maxResults))
+            next_requests.append(self._comments.list(blogId=post['blog']['id'],postId=post['id'],status='live',startDate=startDate,maxResults=self._maxResults))
 
         def on_comments(request_id, response, exception):
             if exception is not None:
@@ -178,11 +187,11 @@ class CommentBot:
 
         return None
 
-    def initCredentialsAndService(self, name, version, directory, scope = None, discovery_filename = None):
+    def initCredentialsAndService(self, name, version, scope = None, discovery_filename = None):
         if scope is None:
             scope = 'https://www.googleapis.com/auth/' + name
 
-        client_secrets = os.path.join(directory, 'client_secrets.json')
+        client_secrets = os.path.join(self._directory, 'client_secrets.json')
 
         flow = client.flow_from_clientsecrets(client_secrets,
             scope=scope,
@@ -207,6 +216,30 @@ class CommentBot:
                     http=http)
 
         return (credentials, service)
+
+    def loadState(self):
+        file = self.getStateFile()
+        if os.path.isfile(file):
+            with open(file, 'r') as handle:
+                self._state = json.load(handle)
+        else:
+            self._state = {}
+
+        if 'utcLastRun' in self._state and not (self._state['utcLastRun'] is None):
+            # normalize string to datetime object, and make sure we have 1 minute overlap
+            self._utcLastRun = datetime.strptime(self._state['utcLastRun'], '%Y-%m-%dT%H:%M:%S.%fZ') - timedelta(minutes=1)
+        else:
+            self._utcLastRun = None
+
+    def saveState(self):
+        self._state['utcLastRun'] = '%sZ' % datetime.utcnow().isoformat('T')
+
+        with open(self.getStateFile(), 'w') as handle:
+            json.dump(self._state, handle, indent=4, sort_keys=True)
+
+    def getStateFile(self):
+        return os.path.join(self._directory, 'client.state.json')
+
 
 def main(argv):
     directory = os.path.dirname(__file__)
