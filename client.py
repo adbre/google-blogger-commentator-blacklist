@@ -47,7 +47,7 @@ def main(argv):
                                 authorId = comment['author']['id']
                                 if authorId in BLACKLIST:
                                     print('[%s] INFO: Removing comment %s in post %s by author %s'%(now(),comment['id'],post['id'],authorId))
-                                    comments.removeContent(blogId=BLOG_ID,postId=post['id'],commentId=comment['id'],key='AIzaSyB2Xhqnjzwe_kJAQ166v5_s-KT9eDnocQ8').execute()
+                                    comments.markAsSpam(blogId=BLOG_ID,postId=post['id'],commentId=comment['id']).execute()
                                     removedComments+=1
                                 commentsScanned+=1
                         request2 = comments.list_next(request2, comments_doc)
