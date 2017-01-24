@@ -31,6 +31,7 @@ class Configuration:
     contentBlacklist = []
     removalMethod = 'markAsSpam'
     blogId = ''
+    lastRunOverlapMinutes = 1
 
     def __init__(self, directory):
         file = os.path.join(os.path.dirname(directory),'config.json')
@@ -41,6 +42,7 @@ class Configuration:
             self.blacklist = self._getValue(cfg, 'blacklist', self.blacklist)
             self.contentBlacklist = self._getValue(cfg, 'contentBlacklist', self.contentBlacklist)
             self.removalMethod = self._getValue(cfg, 'removalMethod', self.removalMethod)
+            self.lastRunOverlapMinutes = int(self._getValue(cfg, 'lastRunOverlapMinutes', self.lastRunOverlapMinutes))
 
     def _getValue(self, cfg, propertyName, default):
         if propertyName in cfg and not (cfg[propertyName] is None):
@@ -105,8 +107,8 @@ class CommentBot:
         current_requests = []
         next_requests = []
 
-        if self._utcLastRun is not None:
-            startDate = '%sZ' % self._utcLastRun.isoformat()
+        if self._utcLastRun is not None and self._config.lastRunOverlapMinutes > -1:
+            startDate = '%sZ' % (self._utcLastRun - timedelta(minutes=self._config.lastRunOverlapMinutes)).isoformat()
         else:
             startDate = None
 
@@ -226,8 +228,7 @@ class CommentBot:
             self._state = {}
 
         if 'utcLastRun' in self._state and not (self._state['utcLastRun'] is None):
-            # normalize string to datetime object, and make sure we have 1 minute overlap
-            self._utcLastRun = datetime.strptime(self._state['utcLastRun'], '%Y-%m-%dT%H:%M:%S.%fZ') - timedelta(minutes=1)
+            self._utcLastRun = datetime.strptime(self._state['utcLastRun'], '%Y-%m-%dT%H:%M:%S.%fZ')
         else:
             self._utcLastRun = None
 

@@ -69,6 +69,11 @@ Standardvärde är `markAsSpam`.
 Observera dock att `removeContent` för närvarande inte fungerar
 pga [vad som verkar ett fel hos Google](http://stackoverflow.com/questions/41732174/google-blogger-api-removecontent-returns-403-for-blog-administrator).
 
+**lastRunOverlapMinutes** är antal minuter relativt innan senaste körningen som används till startdatum. Endast kommentarer skapade efter datumet hämtas.
+Standardvärdet är 1.
+Ifall inget startdatum skall användas (hämta alla kommentarer) sätts denna inställning till ett negativt värde, exempelvis -1.
+Det är rekommenderat att använda minst 1 minuts överlappning för att undvika risken att kommentarer slinker igenom kontrollen.
+
 # Hämta OAuth token
 Programmet måste köras interaktivt för att hämta OAuth token, annars
 kan inte den krypterade token skapas.
@@ -94,3 +99,10 @@ Ett enklare skript finns för att lägga till en användare i **blacklist** i ko
 Som parameter används antingen en URL eller endast det numeriska id:t.
 
     python blacklist.py https://www.blogger.com/profile/10000000000000000000
+
+# Filer som programmet använder
+
+`client.py` behöver ha åtkomsträttigheter att läsa och skriva till filerna `blogger.dat` och `client.state.json`.
+Programmet försöker skapa filerna om de inte redan finns.
+
+Läsrättigheter till filen `config.json` behövs också.
