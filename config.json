@@ -1,0 +1,9 @@
+{
+    "blacklist": [
+        123,
+        456,
+        789
+    ],
+    "blogId": "http://MY-BLOG.blogspot.se",
+    "hours": 10
+}
