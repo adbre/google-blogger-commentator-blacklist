@@ -1,0 +1,7 @@
+{
+    "blacklist": [],
+    "contentBlacklist": [],
+    "blogId": "http://example.blogspot.se/",
+    "hours": 10,
+    "removalMethod": "markAsSpam"
+}

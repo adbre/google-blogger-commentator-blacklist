@@ -10,23 +10,45 @@ import os
 def now():
     return datetime.now()
 
-def main(argv):
-    service, flags = sample_tools.init(
-        argv, 'blogger', 'v3', __doc__, __file__,
-        scope='https://www.googleapis.com/auth/blogger')
+def hasReasonToRemove(comment, config):
+    if comment['author']['id'] in config['blacklist']:
+        return 'Author is blacklisted'
 
+    if 'contentBlacklist' in config and not (config['contentBlacklist'] is None):
+        for term in config['contentBlacklist']:
+            if term in comment['content']:
+                return 'Content contains blacklisted term: %s'%term
+    return None
+
+def getRemovalMethod(comments, removalMethod):
+    if removalMethod == 'delete':
+        return comments.delete
+    if removalMethod == 'markAsSpam':
+        return comments.markAsSpam
+    if removalMethod == 'removeContent':
+        return comments.removeContent
+    print('Check configuration: removalMethod not valid: %s' % removalMethod)
+    sys.exit(1)
+
+def main(argv):
     with open(os.path.join(os.path.dirname(__file__),'config.json')) as handle:
         config = json.load(handle)
         BLOG_ID = config['blogId']
         HOURS = config['hours']
-        BLACKLIST = map(str, config['blacklist'])
+        config['blacklist'] = map(str, config['blacklist'])
+        if not 'removalMethod' in config or (config['removalMethod'] is None):
+            config['removalMethod'] = 'markAsSpam'
+
+    service, flags = sample_tools.init(
+        argv, 'blogger', 'v3', __doc__, __file__,
+        scope='https://www.googleapis.com/auth/blogger')
 
     try:
         blogs = service.blogs()
-
-        blogs = service.blogs()
         posts = service.posts()
         comments = service.comments()
+
+        removalMethod = getRemovalMethod(comments, config['removalMethod'])
 
         if not re.match('^[0-9]+$', BLOG_ID):
             BLOG_ID = blogs.getByUrl(url=BLOG_ID).execute()['id']
@@ -44,10 +66,10 @@ def main(argv):
                         comments_doc = request2.execute()
                         if 'items' in comments_doc and not (comments_doc['items'] is None):
                             for comment in comments_doc['items']:
-                                authorId = comment['author']['id']
-                                if authorId in BLACKLIST:
-                                    print('[%s] INFO: Removing comment %s in post %s by author %s'%(now(),comment['id'],post['id'],authorId))
-                                    comments.markAsSpam(blogId=BLOG_ID,postId=post['id'],commentId=comment['id']).execute()
+                                reason = hasReasonToRemove(comment, config)
+                                if reason:
+                                    print('[%s] INFO: Removing (%s) comment %s in post %s by author %s: %s'%(now(),config['removalMethod'],comment['id'],post['id'],comment['author']['id'],reason))
+                                    removalMethod(blogId=BLOG_ID,postId=post['id'],commentId=comment['id']).execute()
                                     removedComments+=1
                                 commentsScanned+=1
                         request2 = comments.list_next(request2, comments_doc)

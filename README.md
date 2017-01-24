@@ -43,12 +43,15 @@ Ladda ned paket ifrån https://developers.google.com/api-client-library/python/s
 
 # Konfigurera skriptet
 
-Filen `config.json` är konfigurationsfilen.
+Skapa en konfigurationsfil med namnet `config.json`.
+Utgå antingen från exemplet nedan eller `config.example.json`.
 
     {
-        "blogId": "http://cornucommentbottest.blogspot.se",
+        "blogId": "http://example.blogspot.se",
         "hours": 10,
-        "blacklist": [123,456,789]
+        "blacklist": ["123","456","789"],
+        "contentBlacklist": ["http://propagandasite.com/", "banned term", "swearword"],
+        "removalMethod": "markAsSpam"
     }
 
 **blogId** kan vara antingen en URL eller det numeriska **blogId** för bloggen.
@@ -57,6 +60,14 @@ Det är rekommenderat att använda det numeriska värdet för att öka prestanda
 **hours** är ett numeriskt värde på hur gammal (i timmar) blog inlägg måste vara för att skannas efter kommentarer.
 
 **blacklist** är en vektor med author id vars kommentarer ska rensas från blog poster.
+
+**contentBlacklist** är en vektor med strängar/ord som är otillåtna i kommentarer.
+
+**removalMethod** anger hur kommentarer ska tas bort. Värdet vara
+antingen `delete`, `markAsSpam` eller `removeContent`.
+Standardvärde är `markAsSpam`.
+Observera dock att `removeContent` för närvarande inte fungerar
+pga [vad som verkar ett fel hos Google](http://stackoverflow.com/questions/41732174/google-blogger-api-removecontent-returns-403-for-blog-administrator).
 
 # Hämta OAuth token
 Programmet måste köras interaktivt för att hämta OAuth token, annars
