@@ -7,76 +7,117 @@ import re
 import json
 import os
 
-def now():
-    return datetime.now()
+class Logger:
+    def debug(self, message):
+        self._log('DEBUG', message)
+    def info(self, message):
+        self._log('INFO', message)
+    def warning(self, message):
+        self._log('WARNING', message)
+    def error(self, message):
+        self._log('ERROR', message)
+    def _log(self, level, message):
+        print('[%s] %s: %s' % (datetime.now(), level, message))
 
-def hasReasonToRemove(comment, config):
-    if comment['author']['id'] in config['blacklist']:
-        return 'Author is blacklisted'
+class Configuration:
+    hours = 10
+    blacklist = []
+    contentBlacklist = []
+    removalMethod = 'markAsSpam'
+    blogId = ''
 
-    if 'contentBlacklist' in config and not (config['contentBlacklist'] is None):
-        for term in config['contentBlacklist']:
-            if term in comment['content']:
-                return 'Content contains blacklisted term: %s'%term
-    return None
+    def __init__(self, directory):
+        file = os.path.join(os.path.dirname(directory),'config.json')
+        with open(file) as h:
+            cfg = json.load(h)
+            self.blogId = self._getValue(cfg, 'blogId', self.blogId)
+            self.hours = self._getValue(cfg, 'hours', self.hours)
+            self.blacklist = self._getValue(cfg, 'blacklist', self.blacklist)
+            self.contentBlacklist = self._getValue(cfg, 'contentBlacklist', self.contentBlacklist)
+            self.removalMethod = self._getValue(cfg, 'removalMethod', self.removalMethod)
 
-def getRemovalMethod(comments, removalMethod):
-    if removalMethod == 'delete':
-        return comments.delete
-    if removalMethod == 'markAsSpam':
-        return comments.markAsSpam
-    if removalMethod == 'removeContent':
-        return comments.removeContent
-    print('Check configuration: removalMethod not valid: %s' % removalMethod)
-    sys.exit(1)
+    def _getValue(self, cfg, propertyName, default):
+        if propertyName in cfg and not (cfg[propertyName] is None):
+            return cfg[propertyName]
+        else:
+            return default
+
+class CommentBot:
+    scannedPosts = 0
+    scannedComments = 0
+    removedComments = 0
+
+    def __init__(self, log, config, service):
+        self._log = log
+        self._config = config
+        self._service = service
+        self._posts = service.posts()
+        self._comments = service.comments()
+        self._removalMethod = self.getRemovalMethod(self._comments)
+
+    def scanBlog(self, blogId):
+        if not re.match('^[0-9]+$', blogId):
+            blogId = self._service.blogs().getByUrl(url=blogId).execute()['id']
+            self._log.warning('Increase performance by replacing url `blogId` configuration with id %s'%blogId)
+
+        startDate = '%sZ'%(datetime.utcnow()-timedelta(hours=self._config.hours)).isoformat('T')
+        request = self._posts.list(blogId=blogId,startDate=startDate)
+        while request != None:
+            resp = request.execute()
+            if 'items' in resp and not (resp['items'] is None):
+                for post in resp['items']:
+                    self.scanPost(post)
+            request = self._posts.list_next(request, resp)
+
+    def scanPost(self, post):
+        request = self._comments.list(blogId=post['blog']['id'], postId=post['id'],status='live')
+        while request != None:
+            resp = request.execute()
+            if 'items' in resp and not (resp['items'] is None):
+                for comment in resp['items']:
+                    self.scanComment(comment)
+            request = self._comments.list_next(request, resp)
+        self.scannedPosts += 1
+
+    def scanComment(self, comment):
+        reason = self.hasReasonToRemove(comment)
+        if reason:
+            self._log.info('Removing (%s) comment %s in post %s by author %s: %s' % (self._config.removalMethod,comment['id'],comment['post']['id'],comment['author']['id'],reason))
+            self._removalMethod(blogId=comment['blog']['id'],postId=comment['post']['id'],commentId=comment['id']).execute()
+            self.removedComments += 1
+        self.scannedComments += 1
+
+    def getRemovalMethod(self,comments):
+        try:
+            return getattr(comments, self._config.removalMethod)
+        except AttributeError:
+            print('Check configuration: removalMethod not valid: %s' % self._config.removalMethod)
+            sys.exit(1)
+
+    def hasReasonToRemove(self,comment):
+        if comment['author']['id'] in self._config.blacklist:
+            return 'Author is blacklisted'
+
+        if comment['content']:
+            for term in self._config.contentBlacklist:
+                if term in comment['content']:
+                    return 'Content contains blacklisted term: %s' % term
+
+        return None
 
 def main(argv):
-    with open(os.path.join(os.path.dirname(__file__),'config.json')) as handle:
-        config = json.load(handle)
-        BLOG_ID = config['blogId']
-        HOURS = config['hours']
-        config['blacklist'] = map(str, config['blacklist'])
-        if not 'removalMethod' in config or (config['removalMethod'] is None):
-            config['removalMethod'] = 'markAsSpam'
+    log = Logger()
+    config = Configuration(__file__)
 
     service, flags = sample_tools.init(
         argv, 'blogger', 'v3', __doc__, __file__,
         scope='https://www.googleapis.com/auth/blogger')
 
+    bot = CommentBot(log, config, service)
+
     try:
-        blogs = service.blogs()
-        posts = service.posts()
-        comments = service.comments()
-
-        removalMethod = getRemovalMethod(comments, config['removalMethod'])
-
-        if not re.match('^[0-9]+$', BLOG_ID):
-            BLOG_ID = blogs.getByUrl(url=BLOG_ID).execute()['id']
-
-        postsScanned=0
-        commentsScanned=0
-        removedComments=0
-        request = posts.list(blogId=BLOG_ID,startDate='%sZ'%(datetime.utcnow()-timedelta(hours=HOURS)).isoformat('T'))
-        while request != None:
-            posts_doc = request.execute()
-            if 'items' in posts_doc and not (posts_doc['items'] is None):
-                for post in posts_doc['items']:
-                    request2 = comments.list(blogId=BLOG_ID,postId=post['id'],status='live')
-                    while request2 != None:
-                        comments_doc = request2.execute()
-                        if 'items' in comments_doc and not (comments_doc['items'] is None):
-                            for comment in comments_doc['items']:
-                                reason = hasReasonToRemove(comment, config)
-                                if reason:
-                                    print('[%s] INFO: Removing (%s) comment %s in post %s by author %s: %s'%(now(),config['removalMethod'],comment['id'],post['id'],comment['author']['id'],reason))
-                                    removalMethod(blogId=BLOG_ID,postId=post['id'],commentId=comment['id']).execute()
-                                    removedComments+=1
-                                commentsScanned+=1
-                        request2 = comments.list_next(request2, comments_doc)
-                    postsScanned+=1
-            request = posts.list_next(request, posts_doc)
-
-        print('[%s] INFO: %d scanned posts, %d scanned comments, %d removed comments'%(now(),postsScanned,commentsScanned,removedComments))
+        bot.scanBlog(config.blogId)
+        log.info('%d scanned posts, %d scanned comments, %d removed comments' %(bot.scannedComments, bot.scannedPosts, bot.removedComments))
     except client.AccessTokenRefreshError:
         print('[%s] ERROR: The credentials have been revoked or expired, please re-run the application to re-authorize.'%(now()))
 
