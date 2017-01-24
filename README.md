@@ -30,7 +30,7 @@ Filen `config.json` är konfigurationsfilen.
 
     {
         "blogId": "http://cornucommentbottest.blogspot.se",
-        "scanMaxPosts": 10,
+        "hours": 10,
         "blacklist": [123,456,789]
     }
 
