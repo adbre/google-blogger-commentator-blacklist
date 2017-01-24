@@ -1,3 +1,20 @@
+# Kända problem
+Installationen av httplib2 sätter fel rättigheter på `httplib2/cacerts.txt`
+Detta resulterar i att när programmet körs så slängs ett fel när SSL
+certifikaten ska laddas.
+
+Felet åtgärdas genom att ändra rättigheterna på filerna så att alla i systemet kan läsa dem.
+
+    chmod o+r -R  /usr/local/lib/python2.7/dist-packages/httplib2-0.9-py2.7.egg
+
+På Mac OS X finns filerna på en annan plats
+
+    chmod o+r -R /Library/Python/2.7/sitepackages/httplib2-0.9-py2.7.egg
+
+Observera att versionsnummer kan behöva bytas ut i sökvägen.
+
+Lösningen är hämtad från [StackOverflow](http://stackoverflow.com/questions/27870024/google-gmail-api-installed-app-shows-ioerror-13-from-module-ssl-py-w-o-sudo/29679378#29679378)
+
 # Installera beroenden
 
 ## Pakethanterare
