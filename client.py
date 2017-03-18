@@ -57,6 +57,7 @@ class CommentBot:
     useThreading = True
 
     _maxResults = 200
+    _hasErrors = False
 
     def __init__(self, log, config, directory):
         self._log = log
@@ -80,7 +81,10 @@ class CommentBot:
         self.scannedPosts = len(posts)
         self.scannedComments = len(comments)
 
-        self.saveState()
+        if self._hasErrors:
+            self._log.error('At least one error occured. utcLastRun will not be updated.')
+        else:
+            self.saveState()
 
     def getBlogId(self, blogUrl):
         if re.match('^[0-9]+$', blogUrl):
@@ -118,6 +122,7 @@ class CommentBot:
         def on_comments(request_id, response, exception):
             if exception is not None:
                 self._log.error(exception)
+                self._hasErrors = True
                 return
 
             request = current_requests[int(request_id)]
@@ -154,6 +159,7 @@ class CommentBot:
         def on_removed(request_id, response, exception):
             if exception is not None:
                 self._log.error(exception)
+                self._hasErrors = True
                 return
 
             comment,reason = removals[int(request_id)]
