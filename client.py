@@ -121,6 +121,8 @@ class CommentBot:
 
         def on_comments(request_id, response, exception):
             if exception is not None:
+                if exception.resp.status == 404:
+                    return
                 self._log.error(exception)
                 self._hasErrors = True
                 return
